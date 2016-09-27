@@ -72,7 +72,7 @@ type HTTP struct {
 // SSL config options. See https://docs.mongodb.com/manual/reference/configuration-options/#net-ssl-options
 type SSL struct {
 	SSLOnNormalPorts                    bool   `bson:"sslOnNormalPorts"` // deprecated since 2.6
-	Mode                                string `bnson:"mode"`            // disabled, allowSSL, preferSSL, requireSSL
+	Mode                                string `bson:"mode"`             // disabled, allowSSL, preferSSL, requireSSL
 	PEMKeyFile                          string `bson:"PEMKeyFile"`
 	PEMKeyPassword                      string `bson:"PEMKeyPassword"`
 	ClusterFile                         string `bson:"clusterFile"`
@@ -87,8 +87,8 @@ type SSL struct {
 }
 
 type CommandLineOptions struct {
-	Argv     []string  `bson:"argv"`
-	Ok       float64   `bson:"ok"`
-	Parsed   *Parsed   `bson:"parsed"`
-	Security *Security `bson:"security"`
+	Argv     []string `bson:"argv"`
+	Ok       float64  `bson:"ok"`
+	Parsed   Parsed   `bson:"parsed"`
+	Security Security `bson:"security"`
 }

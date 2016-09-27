@@ -14,6 +14,7 @@ import (
 	"github.com/percona/pt-mongodb-summary/db"
 	"github.com/percona/pt-mongodb-summary/proto"
 	"github.com/percona/pt-mongodb-summary/templates"
+	"github.com/pkg/errors"
 	"github.com/shirou/gopsutil/process"
 )
 
@@ -64,7 +65,7 @@ func main() {
 		log.Fatalf("%s", err)
 		return
 	}
-	templateData.ProcessCount, err = countCurrentOps(conn)
+	//templateData.ProcessCount, err = countCurrentOps(conn)
 
 	md, err := conn.IsMaster()
 	if err != nil {
@@ -173,11 +174,9 @@ func fillMissingInfo(conn db.MongoConnector, templateData *templateData) error {
 }
 
 func countCurrentOps(conn db.MongoConnector) (int64, error) {
-	currentOp := proto.CurrentOp{}
-
-	err := conn.Session().DB("admin").C("$cmd.sys.inprog").Find(nil).One(&currentOp)
+	currentOp, err := conn.GetCurrentOp()
 	if err != nil {
-		return 0, err
+		return 0, errors.Wrap(err, "cannot get current op")
 	}
 
 	var i int64

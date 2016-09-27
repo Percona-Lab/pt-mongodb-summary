@@ -12,10 +12,6 @@ type DB struct {
 	session *mgo.Session
 }
 
-type MongoSessionConnector interface {
-	Run(interface{}, interface{}) error
-}
-
 type MongoConnector interface {
 	BuildInfo() (mgo.BuildInfo, error)
 	Close()
