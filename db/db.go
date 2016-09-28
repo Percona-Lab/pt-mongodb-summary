@@ -8,9 +8,12 @@ import (
 )
 
 type DB struct {
-	host    string
-	session *mgo.Session
+	host      string
+	connected bool
+	session   *mgo.Session
 }
+
+var NOT_CONNECTED = errors.New("not connected")
 
 type MongoConnector interface {
 	BuildInfo() (mgo.BuildInfo, error)
@@ -23,9 +26,11 @@ type MongoConnector interface {
 	HostInfo() (proto.HostInfo, error)
 	IsMaster() (proto.MasterDoc, error)
 	ReplicaSetGetStatus() (proto.ReplicaSetStatus, error)
+	RolesCount() (int, error)
 	ServerStatus() (proto.ServerStatus, error)
 	Session() *mgo.Session
-	SessionRun(cmd interface{}, result interface{}) error
+	SessionRun(interface{}, interface{}) error
+	UsersCount() (int, error)
 
 	// TODO not really implemented. Types shouldn't be interface{}
 	ConnectionPoolStats() (interface{}, error)
@@ -44,7 +49,9 @@ func (m *DB) BuildInfo() (mgo.BuildInfo, error) {
 }
 
 func (m *DB) Close() {
-	m.session.Close()
+	if m.session != nil {
+		m.session.Close()
+	}
 }
 
 func (m *DB) CollectionNames(dbname string) ([]string, error) {
@@ -114,6 +121,10 @@ func (m *DB) ReplicaSetGetStatus() (proto.ReplicaSetStatus, error) {
 	return rss, nil
 }
 
+func (m *DB) RolesCount() (int, error) {
+	return m.session.DB("admin").C("system.roles").Count()
+}
+
 func (m *DB) ServerStatus() (proto.ServerStatus, error) {
 	ss := proto.ServerStatus{}
 	err := m.session.DB("admin").Run(bson.D{{"serverStatus", 1}, {"recordStats", 0}}, &ss)
@@ -130,6 +141,12 @@ func (m *DB) Session() *mgo.Session {
 func (m *DB) SessionRun(cmd interface{}, result interface{}) error {
 	return m.session.Run(cmd, result)
 }
+
+func (m *DB) UsersCount() (int, error) {
+	return m.session.DB("admin").C("system.users").Count()
+}
+
+//TODO: do we need these functions?
 
 func (m *DB) ConnectionPoolStats() (interface{}, error) {
 	var stats interface{}

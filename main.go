@@ -31,6 +31,13 @@ type procInfo struct {
 	UserName   string
 }
 
+type security struct {
+	Users int
+	Roles int
+	Auth  string
+	SSL   string
+}
+
 type templateData struct {
 	BuildInfo          mgo.BuildInfo
 	CommandLineOptions proto.CommandLineOptions
@@ -41,6 +48,7 @@ type templateData struct {
 	ProcInfo           procInfo
 	ThisHostID         int64
 	ProcessCount       int64
+	Security           security
 }
 
 var Debug = false
@@ -88,10 +96,7 @@ func main() {
 		log.Print(err)
 	}
 
-	templateData.CommandLineOptions, err = conn.GetCmdLineOpts()
-	if err != nil {
-		log.Print(err)
-	}
+	templateData.Security, err = getSecuritySettings(conn)
 
 	fillMissingInfo(conn, &templateData)
 
@@ -106,6 +111,37 @@ func main() {
 	t = template.Must(template.New("hosttemplateData").Parse(templates.HostInfo))
 	t.Execute(os.Stdout, templateData)
 
+}
+
+func getSecuritySettings(conn db.MongoConnector) (security, error) {
+	s := security{
+		Auth: "disabled",
+		SSL:  "disabled",
+	}
+
+	cmdOpts, err := conn.GetCmdLineOpts()
+	if err != nil {
+		return s, errors.Wrap(err, "cannot get security settings")
+	}
+
+	if cmdOpts.Security.Authorization != "" || cmdOpts.Security.KeyFile != "" {
+		s.Auth = "enabled"
+	}
+	if cmdOpts.Parsed.Net.SSL.Mode != "" && cmdOpts.Parsed.Net.SSL.Mode != "disabled" {
+		s.SSL = cmdOpts.Parsed.Net.SSL.Mode
+	}
+
+	s.Users, err = conn.UsersCount()
+	if err != nil {
+		return s, errors.Wrap(err, "cannot get users count")
+	}
+
+	s.Roles, err = conn.RolesCount()
+	if err != nil {
+		return s, errors.Wrap(err, "cannot get roles count")
+	}
+
+	return s, nil
 }
 
 // TODO REMOVE. Used for debug.

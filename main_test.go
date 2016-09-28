@@ -41,14 +41,46 @@ func TestGetNodeType(t *testing.T) {
 }
 
 func TestGetCurrentOps(t *testing.T) {
-	conn.(*mock.DB).Expect("GetCurrentOp", nil, rootDir+"/test/sample/currentop.json")
+	conn.(*mock.DB).Expect("GetCurrentOp", nil, rootDir+"/test/sample/currentop.json", nil)
 
 	expect := int64(3)
 	got, err := countCurrentOps(conn)
 	if err != nil {
-		t.Error("cannot get current ops: %s", err)
+		t.Errorf("cannot get current ops: %s", err)
 	}
 	if got != expect {
 		t.Errorf("invalid current ops count. Expected %d, got %d", expect, got)
 	}
+}
+
+func TestGetSecuritySettings(t *testing.T) {
+
+	conn := mock.NewMongoMockConnector("some fake host")
+	conn.Connect()
+	defer conn.Close()
+
+	conn.(*mock.DB).Expect("GetCmdLineOpts", nil, rootDir+"/test/sample/cmdopts.json", nil)
+
+	s, err := getSecuritySettings(conn)
+
+	if err != nil {
+		t.Errorf("error getting security settings: %s", err.Error())
+	}
+
+	if s.Users != 1 {
+		t.Error("invalid users count")
+	}
+
+	if s.Roles != 1 {
+		t.Error("invalid roles count")
+	}
+
+	if s.Auth != "enabled" {
+		t.Error("auth should be enabled")
+	}
+
+	if s.SSL != "requireSSL" {
+		t.Errorf("invalid SSL settings. Got %s, expected %s", s.SSL, "requireSSL")
+	}
+
 }

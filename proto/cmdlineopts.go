@@ -23,12 +23,12 @@ type CloSystemLog struct {
 }
 
 type Parsed struct {
-	Sharding          *Sharding          `bson:"sharding"`
-	Storage           *CloStorage        `bson:"storage"`
-	SystemLog         *CloSystemLog      `bson:"systemLog"`
-	Net               *Net               `bson:"net"`
-	ProcessManagement *ProcessManagement `bson:"processManagement"`
-	Replication       *Replication       `bson:"replication"`
+	Sharding          Sharding          `bson:"sharding"`
+	Storage           CloStorage        `bson:"storage"`
+	SystemLog         CloSystemLog      `bson:"systemLog"`
+	Net               Net               `bson:"net"`
+	ProcessManagement ProcessManagement `bson:"processManagement"`
+	Replication       Replication       `bson:"replication"`
 }
 
 // Security is a struct to hold security related configs
@@ -58,8 +58,8 @@ type Security struct {
 
 // NET config options. See https://docs.mongodb.com/manual/reference/configuration-options/#net-options
 type Net struct {
-	HTTP *HTTP `bson:"http"`
-	SSL  *SSL  `bson:"ssl"`
+	HTTP HTTP `bson:"http"`
+	SSL  SSL  `bson:"ssl"`
 }
 
 type HTTP struct {

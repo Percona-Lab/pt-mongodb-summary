@@ -41,7 +41,7 @@ func NewMongoMockConnector(host string) db.MongoConnector {
 	return db
 }
 
-func (m *DB) Expect(method string, expect interface{}, file string) {
+func (m *DB) Expect(method string, expect interface{}, file string, retValues ...interface{}) {
 	if _, ok := m.responses[method]; !ok {
 		m.responses[method] = make(map[interface{}]string)
 	}
@@ -83,7 +83,8 @@ func (m *DB) DatabaseNames() ([]string, error) {
 
 func (m *DB) GetCmdLineOpts() (proto.CommandLineOptions, error) {
 	clo := proto.CommandLineOptions{}
-	return clo, nil
+	err := m.returnExpect("GetCmdLineOpts", nil, &clo)
+	return clo, err
 }
 
 func (m *DB) GetCurrentOp() (proto.CurrentOp, error) {
@@ -114,6 +115,10 @@ func (m *DB) ReplicaSetGetStatus() (proto.ReplicaSetStatus, error) {
 	return rss, nil
 }
 
+func (m *DB) RolesCount() (int, error) {
+	return 1, nil
+}
+
 func (m *DB) ServerStatus() (proto.ServerStatus, error) {
 	ss := proto.ServerStatus{}
 	return ss, nil
@@ -130,6 +135,10 @@ func (m *DB) SessionRun(cmd interface{}, result interface{}) error {
 func (m *DB) ShardConnectionPoolStats() (interface{}, error) {
 	var stats interface{}
 	return stats, nil
+}
+
+func (m *DB) UsersCount() (int, error) {
+	return 1, nil
 }
 
 /*
