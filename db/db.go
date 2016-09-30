@@ -1,6 +1,8 @@
 package db
 
 import (
+	"fmt"
+
 	"github.com/percona/pt-mongodb-summary/proto"
 	"github.com/pkg/errors"
 	"labix.org/v2/mgo"
@@ -13,6 +15,15 @@ type DB struct {
 	session   *mgo.Session
 }
 
+type OplogEntry struct {
+	Name    string
+	Options struct {
+		Capped      bool
+		Size        int64
+		AutoIndexId bool
+	}
+}
+
 var NOT_CONNECTED = errors.New("not connected")
 
 type MongoConnector interface {
@@ -21,8 +32,12 @@ type MongoConnector interface {
 	CollectionNames(dbname string) ([]string, error)
 	Connect() error
 	DatabaseNames() ([]string, error)
+	DbRun(string, interface{}, interface{}) error
+	FindOne(dbname string, collection string, query interface{}, sort []string, result interface{}) error
 	GetCmdLineOpts() (proto.CommandLineOptions, error)
 	GetCurrentOp() (proto.CurrentOp, error)
+	GetOplogCollection() (string, error)
+	GetOplogEntry(string) (*OplogEntry, error)
 	HostInfo() (proto.HostInfo, error)
 	IsMaster() (proto.MasterDoc, error)
 	ReplicaSetGetStatus() (proto.ReplicaSetStatus, error)
@@ -75,6 +90,17 @@ func (m *DB) DatabaseNames() ([]string, error) {
 	return m.session.DatabaseNames()
 }
 
+func (m *DB) FindOne(dbname string, collection string, query interface{}, sort []string, result interface{}) error {
+	db := m.session.DB(dbname)
+	col := db.C(collection)
+
+	err := col.Find(query).Sort(sort...).One(result)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func (m *DB) GetCmdLineOpts() (proto.CommandLineOptions, error) {
 	clo := proto.CommandLineOptions{}
 	err := m.session.DB("admin").Run(bson.D{{"getCmdLineOpts", 1}, {"recordStats", 1}}, &clo)
@@ -92,6 +118,46 @@ func (m *DB) GetCurrentOp() (proto.CurrentOp, error) {
 		return co, err
 	}
 	return co, nil
+}
+
+func (m *DB) GetOplogCollection() (string, error) {
+	oplog := "oplog.rs"
+
+	db := m.session.DB("local")
+	nsCol := db.C("system.namespaces")
+
+	var res interface{}
+	if err := nsCol.Find(bson.M{"name": "local." + oplog}).One(&res); err == nil {
+		return oplog, nil
+	}
+
+	oplog = "oplog.$main"
+	if err := nsCol.Find(bson.M{"name": "local." + oplog}).One(&res); err == nil {
+		return oplog, nil
+	}
+
+	return "", fmt.Errorf("neither master/slave nor replica set replication detected")
+}
+
+func (m *DB) GetOplogEntry(oplogCol string) (*OplogEntry, error) {
+	db := m.session.DB("local")
+	nsCol := db.C("system.namespaces")
+	olEntry := &OplogEntry{}
+
+	err := nsCol.Find(bson.M{"name": "local." + oplogCol}).One(&olEntry)
+	if err != nil {
+		return nil, fmt.Errorf("local.%s, or its options, not found in system.namespaces collection", oplogCol)
+	}
+	return olEntry, nil
+}
+
+func (m *DB) DbRun(dbName string, cmd interface{}, result interface{}) error {
+	db := m.session.DB(dbName)
+	err := db.Run(cmd, result)
+	if err != nil {
+		return errors.Wrapf(err, "cannot run cmd on db %s", dbName)
+	}
+	return nil
 }
 
 func (m *DB) HostInfo() (proto.HostInfo, error) {
@@ -126,12 +192,12 @@ func (m *DB) RolesCount() (int, error) {
 }
 
 func (m *DB) ServerStatus() (proto.ServerStatus, error) {
-	ss := proto.ServerStatus{}
-	err := m.session.DB("admin").Run(bson.D{{"serverStatus", 1}, {"recordStats", 0}}, &ss)
+	stat := proto.ServerStatus{}
+	err := m.session.DB("admin").Run(bson.D{{"serverStatus", 1}, {"recordStats", 1}}, &stat)
 	if err != nil {
-		return ss, errors.Wrap(err, "cannot get server status")
+		return stat, errors.Wrap(err, "cannot get server status")
 	}
-	return ss, nil
+	return stat, nil
 }
 
 func (m *DB) Session() *mgo.Session {

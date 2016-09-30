@@ -38,6 +38,22 @@ type security struct {
 	SSL   string
 }
 
+type timedStats struct {
+	Min   int64
+	Max   int64
+	Total int64
+	Avg   int64
+}
+
+type opCounters struct {
+	Insert  timedStats
+	Query   timedStats
+	Update  timedStats
+	Delete  timedStats
+	GetMore timedStats
+	Command timedStats
+}
+
 type templateData struct {
 	BuildInfo          mgo.BuildInfo
 	CommandLineOptions proto.CommandLineOptions
@@ -49,13 +65,14 @@ type templateData struct {
 	ThisHostID         int64
 	ProcessCount       int64
 	Security           security
+	RunningOps         opCounters
 }
 
 var Debug = false
 
 func main() {
 	var opts options
-	flag.StringVar(&opts.Host, "hosts", "localhost:17002", "List of host:port to connect to")
+	flag.StringVar(&opts.Host, "hosts", "localhost:17001", "List of host:port to connect to")
 	flag.BoolVar(&opts.Debug, "debug", false, "debug mode")
 	flag.Parse()
 
@@ -91,6 +108,12 @@ func main() {
 		log.Print(err)
 	}
 
+	var sampleCount int64 = 5
+	var sampleRate time.Duration = 1 // in seconds
+	fmt.Println("Sampling running ops 5 times every 1 second")
+	osChan := getOpCountersStats(conn, sampleCount, sampleRate*time.Second)
+	templateData.RunningOps = <-osChan
+
 	templateData.HostInfo, err = conn.HostInfo()
 	if err != nil {
 		log.Print(err)
@@ -100,15 +123,24 @@ func main() {
 
 	fillMissingInfo(conn, &templateData)
 
-	err = getProcInfo(templateData.ServerStatus.Pid, &templateData.ProcInfo)
+	err = getProcInfo(int32(templateData.ServerStatus.Pid), &templateData.ProcInfo)
 	if err != nil {
 		log.Printf("cannot get proccess info: %s", err)
 	}
+
+	oplogInfo, err := getOplogInfo(conn)
+	fmt.Printf("oploginfo: %+v\n", oplogInfo)
 
 	t := template.Must(template.New("replicas").Parse(templates.Replicas))
 	t.Execute(os.Stdout, templateData.ReplicaSetStatus)
 
 	t = template.Must(template.New("hosttemplateData").Parse(templates.HostInfo))
+	t.Execute(os.Stdout, templateData)
+
+	t = template.Must(template.New("runningOps").Parse(templates.RunningOps))
+	t.Execute(os.Stdout, templateData)
+
+	t = template.Must(template.New("ssl").Parse(templates.Security))
 	t.Execute(os.Stdout, templateData)
 
 }
@@ -160,6 +192,114 @@ func GetNodeType(md proto.MasterDoc) string {
 		return "mongos"
 	}
 	return "mongod"
+}
+
+func getOpCountersStats(conn db.MongoConnector, count int64, sleep time.Duration) chan opCounters {
+	ch := make(chan opCounters)
+	oc := opCounters{}
+	go func() {
+		ss, err := conn.ServerStatus()
+		if err != nil {
+
+			oc.Insert.Max = ss.Opcounters.Insert
+			oc.Insert.Min = ss.Opcounters.Insert
+			oc.Insert.Total = ss.Opcounters.Insert
+
+			oc.Command.Max = ss.Opcounters.Command
+			oc.Command.Min = ss.Opcounters.Command
+			oc.Command.Total = ss.Opcounters.Command
+
+			oc.Query.Max = ss.Opcounters.Query
+			oc.Query.Min = ss.Opcounters.Query
+			oc.Query.Total = ss.Opcounters.Query
+
+			oc.Update.Max = ss.Opcounters.Update
+			oc.Update.Min = ss.Opcounters.Update
+			oc.Update.Total = ss.Opcounters.Update
+
+			oc.Delete.Max = ss.Opcounters.Delete
+			oc.Delete.Min = ss.Opcounters.Delete
+			oc.Delete.Total = ss.Opcounters.Delete
+
+			oc.GetMore.Max = ss.Opcounters.GetMore
+			oc.GetMore.Min = ss.Opcounters.GetMore
+			oc.GetMore.Total = ss.Opcounters.GetMore
+
+		}
+
+		ticker := time.NewTicker(sleep)
+		for i := int64(0); i < count-1; i++ {
+			<-ticker.C
+			ss, err := conn.ServerStatus()
+			if err != nil {
+				continue
+			}
+			// Insert
+			if ss.Opcounters.Insert > oc.Insert.Max {
+				oc.Insert.Max = ss.Opcounters.Insert
+			}
+			if ss.Opcounters.Insert < oc.Insert.Min {
+				oc.Insert.Min = ss.Opcounters.Insert
+			}
+			oc.Insert.Total += ss.Opcounters.Insert
+
+			// Query ---------------------------------------
+			if ss.Opcounters.Query > oc.Query.Max {
+				oc.Query.Max = ss.Opcounters.Query
+			}
+			if ss.Opcounters.Query < oc.Query.Min {
+				oc.Query.Min = ss.Opcounters.Query
+			}
+			oc.Query.Total += ss.Opcounters.Query
+
+			// Command -------------------------------------
+			if ss.Opcounters.Command > oc.Command.Max {
+				oc.Command.Max = ss.Opcounters.Command
+			}
+			if ss.Opcounters.Command < oc.Command.Min {
+				oc.Command.Min = ss.Opcounters.Command
+			}
+			oc.Command.Total += ss.Opcounters.Command
+
+			// Update --------------------------------------
+			if ss.Opcounters.Update > oc.Update.Max {
+				oc.Update.Max = ss.Opcounters.Update
+			}
+			if ss.Opcounters.Update < oc.Update.Min {
+				oc.Update.Min = ss.Opcounters.Update
+			}
+			oc.Update.Total += ss.Opcounters.Update
+
+			// Delete --------------------------------------
+			if ss.Opcounters.Delete > oc.Delete.Max {
+				oc.Delete.Max = ss.Opcounters.Delete
+			}
+			if ss.Opcounters.Delete < oc.Delete.Min {
+				oc.Delete.Min = ss.Opcounters.Delete
+			}
+			oc.Delete.Total += ss.Opcounters.Delete
+
+			// GetMore -------------------------------------
+			if ss.Opcounters.GetMore > oc.GetMore.Max {
+				oc.GetMore.Max = ss.Opcounters.GetMore
+			}
+			if ss.Opcounters.GetMore < oc.GetMore.Min {
+				oc.GetMore.Min = ss.Opcounters.GetMore
+			}
+			oc.GetMore.Total += ss.Opcounters.GetMore
+		}
+		ticker.Stop()
+
+		oc.Insert.Avg = oc.Insert.Total / count
+		oc.Query.Avg = oc.Query.Total / count
+		oc.Update.Avg = oc.Update.Total / count
+		oc.Delete.Avg = oc.Delete.Total / count
+		oc.GetMore.Avg = oc.GetMore.Total / count
+		oc.Command.Avg = oc.Command.Total / count
+		ch <- oc
+
+	}()
+	return ch
 }
 
 func getProcInfo(pid int32, templateData *procInfo) error {

@@ -1,7 +1,7 @@
 package templates
 
 const HostInfo = `# This host
-# Mongo Executable ###########################################
+# Mongo Executable #############################################################################
        Path to executable | {{.ProcInfo.Path}}
               Has symbols | No
 # Report On {{.ThisHostID}} ########################################
@@ -19,5 +19,4 @@ const HostInfo = `# This host
                   ReplSet | {{.ServerStatus.Repl.SetName}}
               Repl Status | {{.ReplicaSetStatus.MyState}}
              Process Type | {{.ServerStatus.Process}}
-
 `
