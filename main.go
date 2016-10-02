@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"labix.org/v2/mgo"
@@ -66,13 +67,15 @@ type templateData struct {
 	ProcessCount       int64
 	Security           security
 	RunningOps         opCounters
+	SampleRate         time.Duration
+	ReplicaMembers     []proto.Members
 }
 
 var Debug = false
 
 func main() {
 	var opts options
-	flag.StringVar(&opts.Host, "hosts", "localhost:17001", "List of host:port to connect to")
+	flag.StringVar(&opts.Host, "hosts", "localhost", "List of host:port to connect to")
 	flag.BoolVar(&opts.Debug, "debug", false, "debug mode")
 	flag.Parse()
 
@@ -84,13 +87,25 @@ func main() {
 
 	defer conn.Close()
 
+	shardsInfo, _ := conn.ListShards() // Error means we are not connected to a mongos
+
+	// Host names for direct connection (not mongos)
+	hostnames := []string{opts.Host}
+	if shardsInfo != nil {
+		hostnames = []string{}
+		for _, shardInfo := range shardsInfo.Shards {
+			m := strings.Split(shardInfo.Host, "/")
+			h := strings.Split(m[1], ",")
+			hostnames = append(hostnames, h[0])
+		}
+	}
+
 	templateData := templateData{}
 	templateData.BuildInfo, err = conn.BuildInfo()
 	if err != nil {
 		log.Fatalf("%s", err)
 		return
 	}
-	//templateData.ProcessCount, err = countCurrentOps(conn)
 
 	md, err := conn.IsMaster()
 	if err != nil {
@@ -98,10 +113,7 @@ func main() {
 	}
 	templateData.NodeType = GetNodeType(md)
 
-	templateData.ReplicaSetStatus, err = conn.ReplicaSetGetStatus()
-	if err != nil {
-		log.Print(err)
-	}
+	templateData.ReplicaMembers = getReplicasetMembers(hostnames, db.NewMongoConnector)
 
 	templateData.ServerStatus, err = conn.ServerStatus()
 	if err != nil {
@@ -110,7 +122,7 @@ func main() {
 
 	var sampleCount int64 = 5
 	var sampleRate time.Duration = 1 // in seconds
-	fmt.Println("Sampling running ops 5 times every 1 second")
+	templateData.SampleRate = time.Duration(sampleCount) * time.Second * sampleRate
 	osChan := getOpCountersStats(conn, sampleCount, sampleRate*time.Second)
 	templateData.RunningOps = <-osChan
 
@@ -128,11 +140,8 @@ func main() {
 		log.Printf("cannot get proccess info: %s", err)
 	}
 
-	oplogInfo, err := getOplogInfo(conn)
-	fmt.Printf("oploginfo: %+v\n", oplogInfo)
-
 	t := template.Must(template.New("replicas").Parse(templates.Replicas))
-	t.Execute(os.Stdout, templateData.ReplicaSetStatus)
+	t.Execute(os.Stdout, templateData)
 
 	t = template.Must(template.New("hosttemplateData").Parse(templates.HostInfo))
 	t.Execute(os.Stdout, templateData)
@@ -143,6 +152,38 @@ func main() {
 	t = template.Must(template.New("ssl").Parse(templates.Security))
 	t.Execute(os.Stdout, templateData)
 
+	oplogInfo, err := getOplogInfo(hostnames, db.NewMongoConnector)
+	if oplogInfo != nil && len(oplogInfo) > 0 {
+		t = template.Must(template.New("oplogInfo").Parse(templates.Oplog))
+		t.Execute(os.Stdout, oplogInfo[0])
+	}
+
+}
+
+func getReplicasetMembers(hostnames []string, newMongoConnector db.ConnectorFactory) []proto.Members {
+	replicaMembers := []proto.Members{}
+
+	for _, hostname := range hostnames {
+		conn := newMongoConnector(hostname)
+		err := conn.Connect()
+		if err != nil {
+			log.Printf("cannot connect to %s: %s", hostname, err)
+			continue
+		}
+		defer conn.Close()
+
+		replStatus, err := conn.ReplicaSetGetStatus()
+		if err != nil {
+			log.Printf("%v at fillReplicasetInfo, getReplicasetStatus", err)
+			continue
+		}
+		for _, m := range replStatus.Members {
+			m.Set = replStatus.Set
+			replicaMembers = append(replicaMembers, m)
+		}
+	}
+
+	return replicaMembers
 }
 
 func getSecuritySettings(conn db.MongoConnector) (security, error) {
@@ -327,11 +368,6 @@ func getProcInfo(pid int32, templateData *procInfo) error {
 }
 
 func fillMissingInfo(conn db.MongoConnector, templateData *templateData) error {
-	for _, member := range templateData.ReplicaSetStatus.Members {
-		if member.Name == templateData.ServerStatus.Repl.Me {
-			templateData.ThisHostID = member.Id
-		}
-	}
 
 	dbNames, err := conn.DatabaseNames()
 	if err != nil {
@@ -347,19 +383,4 @@ func fillMissingInfo(conn db.MongoConnector, templateData *templateData) error {
 		templateData.HostInfo.CollectionsCount += len(collectionNames)
 	}
 	return nil
-}
-
-func countCurrentOps(conn db.MongoConnector) (int64, error) {
-	currentOp, err := conn.GetCurrentOp()
-	if err != nil {
-		return 0, errors.Wrap(err, "cannot get current op")
-	}
-
-	var i int64
-	for _, inProg := range currentOp.Inprog {
-		if inProg.Query.CurrentOp == 0 {
-			i++
-		}
-	}
-	return i, nil
 }

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"sort"
 	"time"
 
 	"github.com/percona/pt-mongodb-summary/db"
@@ -10,13 +12,28 @@ import (
 )
 
 type OplogInfo struct {
+	Hostname      string
 	Size          int64
 	UsedMB        int64
 	TimeDiff      int64
-	TimeDiffHours int64
+	TimeDiffHours float64
+	Running       string // TimeDiffHours in human readable format
 	TFirst        time.Time
 	TLast         time.Time
 	Now           time.Time
+	ElectionTime  time.Time
+}
+
+type OpLogs []OplogInfo
+
+func (s OpLogs) Len() int {
+	return len(s)
+}
+func (s OpLogs) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
+}
+func (s OpLogs) Less(i, j int) bool {
+	return s[i].TimeDiffHours < s[j].TimeDiffHours
 }
 
 type OplogRow struct {
@@ -52,58 +69,78 @@ type ColStats struct {
 	Count          int64
 }
 
-func getOplogInfo(conn db.MongoConnector) (*OplogInfo, error) {
+func getOplogInfo(hostnames []string, newMongoConnector db.ConnectorFactory) ([]OplogInfo, error) {
 
-	result := &OplogInfo{}
+	results := OpLogs{}
 
-	oplogCol, err := conn.GetOplogCollection()
-	if err != nil {
-		return nil, err
-	}
+	for _, hostname := range hostnames {
+		result := OplogInfo{
+			Hostname: hostname,
+		}
+		conn := newMongoConnector(hostname)
+		err := conn.Connect()
+		if err != nil {
+			return nil, errors.Wrapf(err, "cannot connect to %s", hostname)
+		}
+		defer conn.Close()
 
-	olEntry, err := conn.GetOplogEntry(oplogCol)
-	if err != nil {
-		return nil, errors.Wrap(err, "getOplogInfo -> GetOplogEntry")
-	}
-	result.Size = olEntry.Options.Size / (1024 * 1024)
+		oplogCol, err := conn.GetOplogCollection()
+		if err != nil {
+			return nil, err
+		}
 
-	var colStats ColStats
-	err = conn.DbRun("local", bson.M{"collStats": oplogCol}, &colStats)
-	if err != nil {
-		return nil, errors.Wrapf(err, "cannot get collStats for collection %s", oplogCol)
-	}
+		olEntry, err := conn.GetOplogEntry(oplogCol)
+		if err != nil {
+			return nil, errors.Wrap(err, "getOplogInfo -> GetOplogEntry")
+		}
+		result.Size = olEntry.Options.Size / (1024 * 1024)
 
-	result.UsedMB = colStats.Size / (1024 * 1024)
+		var colStats ColStats
+		err = conn.DbRun("local", bson.M{"collStats": oplogCol}, &colStats)
+		if err != nil {
+			return nil, errors.Wrapf(err, "cannot get collStats for collection %s", oplogCol)
+		}
 
-	var firstRow, lastRow OplogRow
-	err = conn.FindOne("local", oplogCol, nil, []string{"$natural"}, &firstRow)
-	if err != nil {
-		return nil, errors.Wrap(err, "cannot read first oplog row")
-	}
+		result.UsedMB = colStats.Size / (1024 * 1024)
 
-	err = conn.FindOne("local", oplogCol, nil, []string{"-$natural"}, &lastRow)
-	if err != nil {
-		return nil, errors.Wrap(err, "cannot read last oplog row")
-	}
+		var firstRow, lastRow OplogRow
+		err = conn.FindOne("local", oplogCol, nil, []string{"$natural"}, &firstRow)
+		if err != nil {
+			return nil, errors.Wrap(err, "cannot read first oplog row")
+		}
 
-	/*
-		from MongoDB's DB.tsToSeconds:
-			function (x){
-			    if ( x.t && x.i )
-			        return x.t;
-			    return x / 4294967296; // low 32 bits are ordinal #s within a second
+		err = conn.FindOne("local", oplogCol, nil, []string{"-$natural"}, &lastRow)
+		if err != nil {
+			return nil, errors.Wrap(err, "cannot read last oplog row")
+		}
+
+		// https://docs.mongodb.com/manual/reference/bson-types/#timestamps
+		tfirst := firstRow.Ts >> 32
+		tlast := lastRow.Ts >> 32
+		result.TimeDiff = tlast - tfirst
+		result.TimeDiffHours = float64(result.TimeDiff) / 3600
+
+		result.TFirst = time.Unix(tfirst, 0)
+		result.TLast = time.Unix(tlast, 0)
+		result.Now = time.Now().UTC()
+		if result.TimeDiffHours > 24 {
+			result.Running = fmt.Sprintf("%d days", result.TimeDiffHours/24)
+		} else {
+			result.Running = fmt.Sprintf("%0.2f hours", result.TimeDiffHours)
+		}
+
+		replSetStatus, err := conn.ReplicaSetGetStatus()
+		for _, member := range replSetStatus.Members {
+			if member.State == 1 {
+				result.ElectionTime = time.Unix(member.ElectionTime>>32, 0)
+				break
 			}
-	*/
+		}
 
-	tfirst := firstRow.Ts / 4294967296
-	tlast := lastRow.Ts / 4294967296
-	result.TimeDiff = tlast - tfirst
-	result.TimeDiffHours = result.TimeDiff / 3600
+		results = append(results, result)
+	}
 
-	result.TFirst = time.Unix(tfirst, 0)
-	result.TLast = time.Unix(tlast, 0)
-	result.Now = time.Now().UTC()
-
-	return result, nil
+	sort.Sort(results)
+	return results, nil
 
 }

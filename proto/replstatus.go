@@ -17,8 +17,9 @@ type Members struct {
 	ConfigVersion float64 `bson:"configVersion"` // revision # of the replica set configuration object from previous iterations of the configuration.
 	Self          bool    `bson:"self"`          // true if this is the server we are currently connected
 	State         float64 `bson:"state"`         // integer between 0 and 10 that represents the replica state of the member.
-	ElectionTime  float64 `bson:"electionTime"`  // For the current primary, information regarding the election Timestamp from the operation log.
+	ElectionTime  int64   `bson:"electionTime"`  // For the current primary, information regarding the election Timestamp from the operation log.
 	ElectionDate  string  `bson:"electionDate"`  // For the current primary, an ISODate formatted date string that reflects the election date
+	Set           string  `bson:"-"`
 }
 
 // Struct for replSetGetStatus

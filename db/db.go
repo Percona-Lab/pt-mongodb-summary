@@ -26,6 +26,8 @@ type OplogEntry struct {
 
 var NOT_CONNECTED = errors.New("not connected")
 
+type ConnectorFactory func(string) MongoConnector
+
 type MongoConnector interface {
 	BuildInfo() (mgo.BuildInfo, error)
 	Close()
@@ -40,6 +42,7 @@ type MongoConnector interface {
 	GetOplogEntry(string) (*OplogEntry, error)
 	HostInfo() (proto.HostInfo, error)
 	IsMaster() (proto.MasterDoc, error)
+	ListShards() (*proto.ShardsInfo, error)
 	ReplicaSetGetStatus() (proto.ReplicaSetStatus, error)
 	RolesCount() (int, error)
 	ServerStatus() (proto.ServerStatus, error)
@@ -176,6 +179,15 @@ func (m *DB) IsMaster() (proto.MasterDoc, error) {
 		return md, errors.Wrap(err, "cannot get isMaster")
 	}
 	return md, nil
+}
+
+func (m *DB) ListShards() (*proto.ShardsInfo, error) {
+	ls := proto.ShardsInfo{}
+	err := m.session.Run("listShards", &ls)
+	if err != nil {
+		return nil, errors.Wrap(err, "cannot list shards")
+	}
+	return &ls, nil
 }
 
 func (m *DB) ReplicaSetGetStatus() (proto.ReplicaSetStatus, error) {

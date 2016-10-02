@@ -16,7 +16,7 @@ const HostInfo = `# This host
               Collections | {{.HostInfo.CollectionsCount}}
                   Datadir | /data/db
                 Processes | {{.ProcessCount}}
+             Process Type | {{.ServerStatus.Process}}
                   ReplSet | {{.ServerStatus.Repl.SetName}}
               Repl Status | {{.ReplicaSetStatus.MyState}}
-             Process Type | {{.ServerStatus.Process}}
 `
