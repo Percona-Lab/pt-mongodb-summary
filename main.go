@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"labix.org/v2/mgo"
+	"labix.org/v2/mgo/bson"
 
 	"github.com/percona/pt-mongodb-summary/db"
 	"github.com/percona/pt-mongodb-summary/proto"
@@ -55,6 +56,18 @@ type opCounters struct {
 	Command timedStats
 }
 
+type databases struct {
+	Databases []struct {
+		name       string
+		sizeOnDisk int64
+		empty      bool
+		shards     map[string]int64
+	}
+	TotalSize   int64 `bson:"totalSize"`
+	TotalSizeMb int64 `bson:"totalSizeMb"`
+	OK          bool  `bson:"ok"`
+}
+
 type templateData struct {
 	BuildInfo          mgo.BuildInfo
 	CommandLineOptions proto.CommandLineOptions
@@ -65,79 +78,50 @@ type templateData struct {
 	ProcInfo           procInfo
 	ThisHostID         int64
 	ProcessCount       int64
-	Security           security
+	Security           *security
 	RunningOps         opCounters
 	SampleRate         time.Duration
 	ReplicaMembers     []proto.Members
+}
+
+type DB struct {
+	ID          string `bson:"_id"`
+	Partitioned bool   `bson:"partitioned"`
+	Primary     string `bson:"primary"`
+}
+
+type shardStatusCollection struct {
+	LastmodEpoch bson.ObjectId `bson:"lastmodEpoch"`
+	ID           string        `bson:"_id"`
+	LastMod      time.Time     `bson:"lastmod"`
+	Dropped      bool          `bson:"dropped"`
+	Key          struct {
+		ID     string `bson:"_id"`
+		Unique bool   `bson:"unique"`
+	}
+}
+
+type chunk struct {
+	LastmodEpoch bson.ObjectId `bson:"lastmodEpoch"`
+	NS           string        `bson:"ns"`
+	Min          string        `bson:"min._id"`
+	Max          string        `bson:"max._id"`
+	Shard        string        `bson:"shard"`
+	ID           string        `bson:"_id"`
+	Lastmod      int64         `bson:"lastmod"`
 }
 
 var Debug = false
 
 func main() {
 	var opts options
-	flag.StringVar(&opts.Host, "hosts", "localhost", "List of host:port to connect to")
+	flag.StringVar(&opts.Host, "hosts", "localhost:27017", "List of host:port to connect to")
 	flag.BoolVar(&opts.Debug, "debug", false, "debug mode")
 	flag.Parse()
 
-	conn := db.NewMongoConnector(opts.Host)
-	err := conn.Connect()
+	templateData, err := getTemplateData(opts.Host)
 	if err != nil {
-		log.Fatal(err)
-	}
-
-	defer conn.Close()
-
-	shardsInfo, _ := conn.ListShards() // Error means we are not connected to a mongos
-
-	// Host names for direct connection (not mongos)
-	hostnames := []string{opts.Host}
-	if shardsInfo != nil {
-		hostnames = []string{}
-		for _, shardInfo := range shardsInfo.Shards {
-			m := strings.Split(shardInfo.Host, "/")
-			h := strings.Split(m[1], ",")
-			hostnames = append(hostnames, h[0])
-		}
-	}
-
-	templateData := templateData{}
-	templateData.BuildInfo, err = conn.BuildInfo()
-	if err != nil {
-		log.Fatalf("%s", err)
-		return
-	}
-
-	md, err := conn.IsMaster()
-	if err != nil {
-		log.Print(err)
-	}
-	templateData.NodeType = GetNodeType(md)
-
-	templateData.ReplicaMembers = getReplicasetMembers(hostnames, db.NewMongoConnector)
-
-	templateData.ServerStatus, err = conn.ServerStatus()
-	if err != nil {
-		log.Print(err)
-	}
-
-	var sampleCount int64 = 5
-	var sampleRate time.Duration = 1 // in seconds
-	templateData.SampleRate = time.Duration(sampleCount) * time.Second * sampleRate
-	osChan := getOpCountersStats(conn, sampleCount, sampleRate*time.Second)
-	templateData.RunningOps = <-osChan
-
-	templateData.HostInfo, err = conn.HostInfo()
-	if err != nil {
-		log.Print(err)
-	}
-
-	templateData.Security, err = getSecuritySettings(conn)
-
-	fillMissingInfo(conn, &templateData)
-
-	err = getProcInfo(int32(templateData.ServerStatus.Pid), &templateData.ProcInfo)
-	if err != nil {
-		log.Printf("cannot get proccess info: %s", err)
+		panic(err)
 	}
 
 	t := template.Must(template.New("replicas").Parse(templates.Replicas))
@@ -152,18 +136,108 @@ func main() {
 	t = template.Must(template.New("ssl").Parse(templates.Security))
 	t.Execute(os.Stdout, templateData)
 
-	oplogInfo, err := getOplogInfo(hostnames, db.NewMongoConnector)
-	if oplogInfo != nil && len(oplogInfo) > 0 {
-		t = template.Must(template.New("oplogInfo").Parse(templates.Oplog))
-		t.Execute(os.Stdout, oplogInfo[0])
-	}
+	//oplogInfo, err := getOplogInfo(hostnames, db.NewMongoConnector)
+	//if oplogInfo != nil && len(oplogInfo) > 0 {
+	//	t = template.Must(template.New("oplogInfo").Parse(templates.Oplog))
+	//	t.Execute(os.Stdout, oplogInfo[0])
+	//}
 
+	//doSomething(conn.Session())
 }
 
-func getReplicasetMembers(hostnames []string, newMongoConnector db.ConnectorFactory) []proto.Members {
-	replicaMembers := []proto.Members{}
+func getTemplateData(hostname string) (templateData, error) {
+	td := templateData{}
+	hostnames, err := getHostnames(hostname)
+	if err != nil {
+		return templateData{}, err
+	}
 
-	for _, hostname := range hostnames {
+	session, err := mgo.Dial(hostname)
+	if err != nil {
+		return templateData{}, err
+	}
+	defer session.Close()
+
+	//
+	td.BuildInfo, err = session.BuildInfo()
+	if err != nil {
+		return templateData{}, err
+	}
+
+	//
+	td.NodeType, err = getNodeType(session)
+	if err != nil {
+		return templateData{}, err
+	}
+
+	//
+	td.ReplicaMembers, err = getReplicasetMembers(hostnames)
+	if err != nil {
+		return templateData{}, err
+	}
+
+	//
+	err = session.DB("admin").Run(bson.D{{"serverStatus", 1}, {"recordStats", 1}}, &td.ServerStatus)
+	if err != nil {
+		return templateData{}, err
+	}
+
+	// Sample Running Ops
+	//var sampleCount int64 = 5
+	//var sampleRate time.Duration = 1 // in seconds
+	//templateData.SampleRate = time.Duration(sampleCount) * time.Second * sampleRate
+	//osChan := getOpCountersStats(conn, sampleCount, sampleRate*time.Second)
+	//templateData.RunningOps = <-osChan
+
+	//
+	err = session.Run(bson.M{"hostInfo": 1}, &td.HostInfo)
+	if err != nil {
+		return templateData{}, err
+	}
+
+	td.Security, err = getSecuritySettings(session)
+
+	//fillMissingInfo(conn, &templateData)
+
+	err = getProcInfo(int32(td.ServerStatus.Pid), &td.ProcInfo)
+	if err != nil {
+		return templateData{}, err
+	}
+
+	return td, nil
+}
+
+func getHostnames(hostname string) ([]string, error) {
+
+	session, err := mgo.Dial(hostname)
+	if err != nil {
+		return nil, err
+	}
+	defer session.Close()
+
+	shardsInfo := &proto.ShardsInfo{}
+	err = session.Run("listShards", shardsInfo)
+	if err != nil {
+		return nil, errors.Wrap(err, "cannot list shards")
+	}
+
+	hostnames := []string{hostname}
+	if shardsInfo != nil {
+		for _, shardInfo := range shardsInfo.Shards {
+			m := strings.Split(shardInfo.Host, "/")
+			h := strings.Split(m[1], ",")
+			hostnames = append(hostnames, h[0])
+		}
+	}
+	return hostnames, nil
+}
+
+func getClusterWideInfo(newMongoConnector db.ConnectorFactory, mongods []string) {
+
+	shardedCols := make(map[string]bool)
+	unshardedCols := make(map[string]bool)
+
+	for _, hostname := range mongods {
 		conn := newMongoConnector(hostname)
 		err := conn.Connect()
 		if err != nil {
@@ -171,30 +245,106 @@ func getReplicasetMembers(hostnames []string, newMongoConnector db.ConnectorFact
 			continue
 		}
 		defer conn.Close()
+		session := conn.Session()
 
-		replStatus, err := conn.ReplicaSetGetStatus()
+		r := make(map[string]interface{})
+		i := session.DB("config").C("databases").Find(bson.M{"partitioned": true}).Iter()
+		for i.Next(r) {
+			shardedCols[r["_id"].(string)] = true
+		}
+
+		dbs, err := conn.DatabaseNames()
 		if err != nil {
-			log.Printf("%v at fillReplicasetInfo, getReplicasetStatus", err)
 			continue
 		}
-		for _, m := range replStatus.Members {
-			m.Set = replStatus.Set
+		for _, dbname := range dbs {
+			_, ok := shardedCols[dbname]
+			if !ok {
+				unshardedCols[dbname] = true
+			}
+		}
+	}
+	fmt.Printf("Sharded cols: %d\n%+v\n", len(shardedCols), shardedCols)
+	fmt.Printf("Unsharded cols: %d\n%+v\n", len(unshardedCols), unshardedCols)
+
+}
+
+func doSomething(session *mgo.Session) {
+
+	var databases databases
+	err := session.Run(bson.M{"listDatabases": 1}, &databases)
+	if err != nil {
+		log.Printf("error en dosomething %s\n", err)
+		return
+	}
+	fmt.Printf("%#v\n", databases)
+	fmt.Printf("db count: %d\n", len(databases.Databases))
+	configDB := session.DB("config")
+
+	var dbs []DB
+	_ = configDB.C("databases").Find(nil).All(&dbs)
+	var partitionedCount, notPartiionedCount int
+	fmt.Printf("%+v\n", dbs)
+	for _, db := range dbs {
+		if !db.Partitioned {
+			notPartiionedCount++
+		}
+		partitionedCount++
+		var collections []shardStatusCollection
+		err := configDB.C("collections").Find(bson.M{"_id": bson.RegEx{db.ID, ""}}).All(&collections)
+		fmt.Printf("%v %+v\n", err, collections)
+		chunksCol := configDB.C("chunks")
+		for _, collection := range collections {
+			if !collection.Dropped {
+				var chunks []chunk
+				err := chunksCol.Find(bson.M{"ns": collection.ID}).All(&chunks)
+				if err != nil {
+					continue
+				}
+				fmt.Println("----------------------------------------------------------------------------------------------------")
+				for i, chunk := range chunks {
+					fmt.Printf("%d: %+v\n\n", i, chunk)
+				}
+			}
+		}
+	}
+	fmt.Printf("Partitioned: %d, not part: %d\n", partitionedCount, notPartiionedCount)
+}
+
+func getReplicasetMembers(hostnames []string) ([]proto.Members, error) {
+	replicaMembers := []proto.Members{}
+
+	for _, hostname := range hostnames {
+		session, err := mgo.Dial(hostname)
+		if err != nil {
+			return nil, errors.Wrap(err, "cannot get ReplicaSetStatus")
+		}
+		defer session.Close()
+
+		rss := proto.ReplicaSetStatus{}
+		err = session.Run(bson.M{"replSetGetStatus": 1}, &rss)
+		if err != nil {
+			continue // If a host is a mongos we cannot get info but is not a real error
+		}
+		for _, m := range rss.Members {
+			m.Set = rss.Set
 			replicaMembers = append(replicaMembers, m)
 		}
 	}
 
-	return replicaMembers
+	return replicaMembers, nil
 }
 
-func getSecuritySettings(conn db.MongoConnector) (security, error) {
+func getSecuritySettings(session *mgo.Session) (*security, error) {
 	s := security{
 		Auth: "disabled",
 		SSL:  "disabled",
 	}
 
-	cmdOpts, err := conn.GetCmdLineOpts()
+	cmdOpts := proto.CommandLineOptions{}
+	err := session.DB("admin").Run(bson.D{{"getCmdLineOpts", 1}, {"recordStats", 1}}, &cmdOpts)
 	if err != nil {
-		return s, errors.Wrap(err, "cannot get security settings")
+		return nil, errors.Wrap(err, "cannot get command line options")
 	}
 
 	if cmdOpts.Security.Authorization != "" || cmdOpts.Security.KeyFile != "" {
@@ -204,17 +354,17 @@ func getSecuritySettings(conn db.MongoConnector) (security, error) {
 		s.SSL = cmdOpts.Parsed.Net.SSL.Mode
 	}
 
-	s.Users, err = conn.UsersCount()
+	s.Users, err = session.DB("admin").C("system.users").Count()
 	if err != nil {
-		return s, errors.Wrap(err, "cannot get users count")
+		return nil, errors.Wrap(err, "cannot get users count")
 	}
 
-	s.Roles, err = conn.RolesCount()
+	s.Roles, err = session.DB("admin").C("system.roles").Count()
 	if err != nil {
-		return s, errors.Wrap(err, "cannot get roles count")
+		return nil, errors.Wrap(err, "cannot get roles count")
 	}
 
-	return s, nil
+	return &s, nil
 }
 
 // TODO REMOVE. Used for debug.
@@ -223,16 +373,21 @@ func format(title string, templateData interface{}) string {
 	return title + "\n" + string(txt)
 }
 
-func GetNodeType(md proto.MasterDoc) string {
+func getNodeType(session *mgo.Session) (string, error) {
+	md := proto.MasterDoc{}
+	err := session.Run("isMaster", &md)
+	if err != nil {
+		return "", err
+	}
 
 	if md.SetName != nil || md.Hosts != nil {
-		return "replset"
+		return "replset", nil
 	} else if md.Msg == "isdbgrid" {
 		// isdbgrid is always the msg value when calling isMaster on a mongos
 		// see http://docs.mongodb.org/manual/core/sharded-cluster-query-router/
-		return "mongos"
+		return "mongos", nil
 	}
-	return "mongod"
+	return "mongod", nil
 }
 
 func getOpCountersStats(conn db.MongoConnector, count int64, sleep time.Duration) chan opCounters {
@@ -367,20 +522,31 @@ func getProcInfo(pid int32, templateData *procInfo) error {
 	return nil
 }
 
-func fillMissingInfo(conn db.MongoConnector, templateData *templateData) error {
+func getDbsAndCollectionsCount(hostnames []string) (int, int, error) {
+	dbnames := make(map[string]bool)
+	colnames := make(map[string]bool)
 
-	dbNames, err := conn.DatabaseNames()
-	if err != nil {
-		return err
-	}
-
-	templateData.HostInfo.DatabasesCount = len(dbNames)
-	for _, dbname := range dbNames {
-		collectionNames, err := conn.CollectionNames(dbname)
+	for _, hostname := range hostnames {
+		session, err := mgo.Dial(hostname)
 		if err != nil {
-			return err
+			continue
 		}
-		templateData.HostInfo.CollectionsCount += len(collectionNames)
+		dbs, err := session.DatabaseNames()
+		if err != nil {
+			continue
+		}
+
+		for _, dbname := range dbs {
+			dbnames[dbname] = true
+			cols, err := session.DB(dbname).CollectionNames()
+			if err != nil {
+				continue
+			}
+			for _, colname := range cols {
+				colnames[dbname+"."+colname] = true
+			}
+		}
 	}
-	return nil
+
+	return len(dbnames), len(colnames), nil
 }
