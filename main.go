@@ -178,6 +178,7 @@ func getTemplateData(hostname string) (templateData, error) {
 
 	//
 	err = session.DB("admin").Run(bson.D{{"serverStatus", 1}, {"recordStats", 1}}, &td.ServerStatus)
+	write("serverstatus", td.ServerStatus)
 	if err != nil {
 		return templateData{}, err
 	}
@@ -191,6 +192,7 @@ func getTemplateData(hostname string) (templateData, error) {
 
 	//
 	err = session.Run(bson.M{"hostInfo": 1}, &td.HostInfo)
+	write("hostinfo", td.HostInfo)
 	if err != nil {
 		return templateData{}, err
 	}
@@ -277,8 +279,6 @@ func doSomething(session *mgo.Session) {
 		log.Printf("error en dosomething %s\n", err)
 		return
 	}
-	fmt.Printf("%#v\n", databases)
-	fmt.Printf("db count: %d\n", len(databases.Databases))
 	configDB := session.DB("config")
 
 	var dbs []DB
@@ -371,6 +371,18 @@ func getSecuritySettings(session *mgo.Session) (*security, error) {
 func format(title string, templateData interface{}) string {
 	txt, _ := json.MarshalIndent(templateData, "", "    ")
 	return title + "\n" + string(txt)
+}
+
+func write(title string, templateData interface{}) {
+	//d := os.Getenv("BASEDIR")
+	//if d == "" {
+	//	log.Printf("cannot get BASEDIR env var")
+	//	return
+	//}
+	//txt, _ := json.MarshalIndent(templateData, "", "    ")
+	//f, _ := os.Create("test/sample/" + title + ".json")
+	//f.Write(txt)
+	//f.Close()
 }
 
 func getNodeType(session *mgo.Session) (string, error) {

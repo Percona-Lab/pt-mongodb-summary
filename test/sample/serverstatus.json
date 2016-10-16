@@ -1,0 +1,58 @@
+{
+    "Host": "karl-HP-ENVY",
+    "Version": "3.0.11",
+    "Process": "mongos",
+    "Pid": 7473,
+    "Uptime": 15919,
+    "UptimeMillis": 15919127,
+    "UptimeEstimate": 15745,
+    "LocalTime": "2016-10-15T20:22:40.832-03:00",
+    "Asserts": {
+        "msg": 0,
+        "regular": 0,
+        "rollovers": 0,
+        "user": 0,
+        "warning": 0
+    },
+    "BackgroundFlushing": null,
+    "ExtraInfo": {
+        "PageFaults": 7,
+        "HeapUsageBytes": 2.365112e+06,
+        "Note": "fields vary by platform"
+    },
+    "Connections": {
+        "Current": 2,
+        "Available": 817,
+        "TotalCreated": 9
+    },
+    "Dur": null,
+    "GlobalLock": null,
+    "Locks": null,
+    "Network": {
+        "BytesIn": 3181,
+        "BytesOut": 14897,
+        "NumRequests": 50
+    },
+    "Opcounters": {
+        "Insert": 0,
+        "Query": 0,
+        "Update": 0,
+        "Delete": 0,
+        "GetMore": 0,
+        "Command": 50
+    },
+    "OpcountersRepl": null,
+    "RecordStats": null,
+    "Mem": {
+        "Bits": 64,
+        "Resident": 11,
+        "Virtual": 119,
+        "Supported": true,
+        "Mapped": 0,
+        "MappedWithJournal": 0
+    },
+    "Repl": null,
+    "ShardCursorType": null,
+    "StorageEngine": null,
+    "WiredTiger": null
+}

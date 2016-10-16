@@ -2,11 +2,16 @@ package main
 
 import (
 	"fmt"
+	"io/ioutil"
+	"log"
+	"os"
 	"reflect"
 	"testing"
 
 	"github.com/golang/mock/gomock"
 	"github.com/percona/pt-mongodb-summary/proto"
+	"github.com/percona/pt-mongodb-summary/test"
+	//"github.com/percona/pt-mongodb-summary/test"
 	"labix.org/v2/mgo" // mock
 	"labix.org/v2/mgo/bson"
 )
@@ -165,6 +170,101 @@ func TestGetReplicasetMembers(t *testing.T) {
 	}
 	if !reflect.DeepEqual(rss, expect) {
 		t.Errorf("getReplicasetMembers: got %+v, expected: %+v\n", rss, expect)
+	}
+
+}
+
+func TestGetTemplateData(t *testing.T) {
+
+	d := os.Getenv("BASEDIR")
+	if d == "" {
+		log.Printf("cannot get BASEDIR env var")
+		return
+	}
+	d1, _ := os.Getwd()
+	ioutil.WriteFile("/tmp/dat1", []byte(d1), 0644)
+
+	shardsInfo := proto.ShardsInfo{}
+	test.LoadJson(d+"/test/sample/shardsinfo.json", &shardsInfo)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mgo.MOCK().SetController(ctrl)
+
+	session := &mgo.Session{}
+
+	mgo.EXPECT().Dial(gomock.Any()).Return(session, nil)
+	session.EXPECT().Run("listShards", gomock.Any()).SetArg(1, shardsInfo)
+	session.EXPECT().Close()
+
+	mgo.EXPECT().Dial(gomock.Any()).Return(session, nil)
+
+	var bi mgo.BuildInfo
+	test.LoadJson(d+"/test/sample/buildinfo.json", &bi)
+	session.EXPECT().BuildInfo().Return(bi, nil)
+
+	var md proto.MasterDoc
+	test.LoadJson(d+"/test/sample/ismaster.json", &md)
+	session.EXPECT().Run("isMaster", gomock.Any()).SetArg(1, md)
+
+	// getReplicasetMembers
+	rss0 := proto.ReplicaSetStatus{}
+	rss1 := proto.ReplicaSetStatus{}
+	rss2 := proto.ReplicaSetStatus{}
+	test.LoadJson(d+"/test/sample/replsetgetstatus_00.json", &rss0)
+	test.LoadJson(d+"/test/sample/replsetgetstatus_01.json", &rss1)
+	test.LoadJson(d+"/test/sample/replsetgetstatus_02.json", &rss2)
+	mgo.EXPECT().Dial(gomock.Any()).Return(session, nil)
+	session.EXPECT().Run(bson.M{"replSetGetStatus": 1}, gomock.Any()).SetArg(1, rss0)
+	session.EXPECT().Close()
+	mgo.EXPECT().Dial(gomock.Any()).Return(session, nil)
+	session.EXPECT().Run(bson.M{"replSetGetStatus": 1}, gomock.Any()).SetArg(1, rss1)
+	session.EXPECT().Close()
+	mgo.EXPECT().Dial(gomock.Any()).Return(session, nil)
+	session.EXPECT().Run(bson.M{"replSetGetStatus": 1}, gomock.Any()).SetArg(1, rss2)
+	session.EXPECT().Close()
+
+	// serverStatus
+	database := &mgo.Database{}
+	//usersCol := &mgo.Collection{}
+	//rolesCol := &mgo.Collection{}
+	ss := proto.ServerStatus{}
+	test.LoadJson(d+"/test/sample/serverstatus.json", &ss)
+	session.EXPECT().DB("admin").Return(database)
+	database.EXPECT().Run(bson.D{{"serverStatus", 1}, {"recordStats", 1}}, gomock.Any()).SetArg(1, ss)
+
+	// get host info
+	hi := proto.HostInfo{}
+	test.LoadJson(d+"/test/sample/hostinfo.json", &hi)
+	session.EXPECT().Run(bson.M{"hostInfo": 1}, gomock.Any()).SetArg(1, hi)
+
+	// get security settings
+	cmdopts := proto.CommandLineOptions{}
+	test.LoadJson(d+"/test/sample/cmdopts.json", &cmdopts)
+	session.EXPECT().DB("admin").Return(database)
+	database.EXPECT().Run(bson.D{{"getCmdLineOpts", 1}, {"recordStats", 1}}, gomock.Any()).SetArg(1, cmdopts)
+
+	usersCol := &mgo.Collection{}
+	rolesCol := &mgo.Collection{}
+
+	session.EXPECT().DB("admin").Return(database)
+	database.EXPECT().C("system.users").Return(usersCol)
+	usersCol.EXPECT().Count().Return(1, nil)
+
+	session.EXPECT().DB("admin").Return(database)
+	database.EXPECT().C("system.roles").Return(rolesCol)
+	rolesCol.EXPECT().Count().Return(2, nil)
+
+	//
+	session.EXPECT().Close()
+
+	td, err := getTemplateData("localhost")
+	if err != nil {
+		t.Errorf("cannot get template data: %s", err)
+	}
+	if td.NodeType == "" {
+		t.Errorf("something was wrong. cannot get template data")
 	}
 
 }
