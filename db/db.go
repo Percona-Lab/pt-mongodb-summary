@@ -3,7 +3,7 @@ package db
 import (
 	"fmt"
 
-	"github.com/percona/pt-mongodb-summary/proto"
+	"github.com/Percona-Lab/pt-mongodb-summary/proto"
 	"github.com/pkg/errors"
 	"labix.org/v2/mgo"
 	"labix.org/v2/mgo/bson"

@@ -5,7 +5,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/percona/pt-mongodb-summary/db"
+	"github.com/Percona-Lab/pt-mongodb-summary/db"
 	"github.com/pkg/errors"
 
 	"labix.org/v2/mgo/bson"

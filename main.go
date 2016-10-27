@@ -13,9 +13,9 @@ import (
 	"labix.org/v2/mgo"
 	"labix.org/v2/mgo/bson"
 
-	"github.com/percona/pt-mongodb-summary/db"
-	"github.com/percona/pt-mongodb-summary/proto"
-	"github.com/percona/pt-mongodb-summary/templates"
+	"github.com/Percona-Lab/pt-mongodb-summary/db"
+	"github.com/Percona-Lab/pt-mongodb-summary/proto"
+	"github.com/Percona-Lab/pt-mongodb-summary/templates"
 	"github.com/pkg/errors"
 	"github.com/shirou/gopsutil/process"
 )

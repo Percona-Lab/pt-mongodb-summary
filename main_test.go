@@ -9,9 +9,9 @@ import (
 	"testing"
 
 	"github.com/golang/mock/gomock"
-	"github.com/percona/pt-mongodb-summary/proto"
-	"github.com/percona/pt-mongodb-summary/test"
-	//"github.com/percona/pt-mongodb-summary/test"
+	"github.com/Percona-Lab/pt-mongodb-summary/proto"
+	"github.com/Percona-Lab/pt-mongodb-summary/test"
+	//"github.com/Percona-Lab/pt-mongodb-summary/test"
 	"labix.org/v2/mgo" // mock
 	"labix.org/v2/mgo/bson"
 )
