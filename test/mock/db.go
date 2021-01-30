@@ -7,8 +7,8 @@ import (
 
 	mgo "labix.org/v2/mgo"
 
-	"github.com/percona/pt-mongodb-summary/db"
-	"github.com/percona/pt-mongodb-summary/proto"
+	"github.com/Percona-Lab/pt-mongodb-summary/db"
+	"github.com/Percona-Lab/pt-mongodb-summary/proto"
 )
 
 /*
